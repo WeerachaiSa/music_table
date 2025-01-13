@@ -23,22 +23,18 @@ for sound_file in sound_files:
 color_ranges = {
     "red": [(0, 50, 50), (10, 255, 255)],
     "orange": [(11, 50, 50), (25, 255, 255)],
-    "yellow": [(26, 50, 50), (35, 255, 255)],
-    "green": [(36, 50, 50), (85, 255, 255)],
-    "blue": [(86, 50, 50), (125, 255, 255)],
-    "indigo": [(126, 50, 50), (140, 255, 255)],
-    "pink": [(141, 50, 50), (170, 255, 255)],
+    "blue": [(26, 50, 50), (85, 255, 255)],
+    "green": [(86, 50, 50), (125, 255, 255)],
+    "purple": [(126, 50, 50), (170, 255, 255)],
 }
 
 # Map colors to sound indices
 color_to_sound = {
     "red": 0,
     "orange": 1,
-    "yellow": 2,
+    "blue": 2,
     "green": 3,
-    "blue": 4,
-    "indigo": 5,
-    "pink": 6,
+    "purple": 4,
 }
 
 # Recordings storage
@@ -47,6 +43,7 @@ current_recording = []
 recording_mode = False
 naming_mode = False
 recording_name = ""
+playing_recording = None
 
 # Function to detect color
 def detect_color(hsv_frame, x, y):
@@ -64,11 +61,11 @@ def play_sound_by_color(color):
         if sound:
             sound.play()
 
-# Function to play a recording
+# Function to play a recording in a loop
 def play_recording(recording_name):
+    global playing_recording
     if recording_name in recordings:
-        for color in recordings[recording_name]:
-            play_sound_by_color(color)
+        playing_recording = recordings[recording_name][:]  # Copy the list
 
 # Adjust brightness and contrast using CLAHE
 def adjust_brightness_contrast(image):
@@ -79,45 +76,37 @@ def adjust_brightness_contrast(image):
     lab = cv2.merge((l, a, b))
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-# Draw buttons on the frame
-def draw_buttons(frame):
-    height, width, _ = frame.shape
-    button_width = 150
-    button_height = 50
-
-    # Define button positions
-    record_button = (10, height - 60, button_width, button_height)
-    stop_button = (170, height - 60, button_width, button_height)
-
-    # Draw buttons
-    cv2.rectangle(frame, (record_button[0], record_button[1]),
-                  (record_button[0] + record_button[2], record_button[1] + record_button[3]), (0, 255, 0), -1)
-    cv2.putText(frame, "Record", (record_button[0] + 10, record_button[1] + 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-    cv2.rectangle(frame, (stop_button[0], stop_button[1]),
-                  (stop_button[0] + stop_button[2], stop_button[1] + stop_button[3]), (0, 0, 255), -1)
-    cv2.putText(frame, "Stop", (stop_button[0] + 30, stop_button[1] + 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-    return record_button, stop_button
-
 # Draw recording list on the frame
 def draw_recording_list(frame):
+    global playing_recording
     height, width, _ = frame.shape
     y_offset = 20
+    button_width = 80
+    button_height = 30
+
     for idx, name in enumerate(recordings.keys()):
-        y_position = y_offset + idx * 30
-        cv2.putText(frame, name, (width - 200, y_position),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
-    return width - 200, y_offset, 200, len(recordings) * 30
+        y_position = y_offset + idx * (button_height + 10)
+
+        # Draw name box
+        cv2.putText(frame, name, (width - 300, y_position + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        # Draw play/stop button
+        button_color = (0, 255, 0) if playing_recording != recordings[name] else (0, 0, 255)
+        cv2.rectangle(frame, (width - 100, y_position), (width - 100 + button_width, y_position + button_height),
+                      button_color, -1)
+        button_text = "Play" if playing_recording != recordings[name] else "Stop"
+        cv2.putText(frame, button_text, (width - 100 + 5, y_position + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    return width - 100, y_offset, button_width, len(recordings) * (button_height + 10)
 
 # Start capturing from webcam
 cap = cv2.VideoCapture(1)  # Change to 0 for the default webcam
 x_position = 0  # Initial position of scanning line
 playback_speed = 2  # Default scanning speed
+exit_program = False  # Variable to control exit
 
-while True:
+while not exit_program:
     ret, frame = cap.read()
     if not ret:
         break
@@ -140,6 +129,13 @@ while True:
             current_recording.append(color_detected)
         play_sound_by_color(color_detected)
 
+    # Play a recording if currently active
+    if playing_recording:
+        if playing_recording:
+            play_sound_by_color(playing_recording.pop(0))
+        else:
+            playing_recording = None
+
     # Display scanning line
     cv2.line(frame, (x_position, 0), (x_position, frame.shape[0]), (255, 255, 255), 2)
 
@@ -157,8 +153,7 @@ while True:
         cv2.putText(frame, f"Enter name: {recording_name}_", (10, 150),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
 
-    # Draw buttons and get their positions
-    record_button, stop_button = draw_buttons(frame)
+    # Draw recording list
     recording_list_area = draw_recording_list(frame)
 
     # Show the frame
@@ -169,52 +164,50 @@ while True:
     if x_position >= frame.shape[1]:  # Reset to the left side if it reaches the right
         x_position = 0
 
-    # Handle mouse input for button clicks
-    def on_mouse(event, x, y, flags, param):
-        global recording_mode, naming_mode, recording_name
-        if event == cv2.EVENT_LBUTTONDOWN:
-            if record_button[0] <= x <= record_button[0] + record_button[2] and record_button[1] <= y <= record_button[1] + record_button[3]:
-                recording_mode = True
-                naming_mode = False
-                current_recording.clear()
-                print("Recording started...")
-            elif stop_button[0] <= x <= stop_button[0] + stop_button[2] and stop_button[1] <= y <= stop_button[1] + stop_button[3]:
-                recording_mode = False
-                if current_recording:
-                    naming_mode = True
-                    print("Recording stopped. Enter name in the video window.")
-            # Check if a recording name is clicked
-            else:
-                list_x, list_y, list_width, list_height = recording_list_area
-                if list_x <= x <= list_x + list_width and list_y <= y <= list_y + list_height:
-                    idx = (y - list_y) // 30
-                    if 0 <= idx < len(recordings):
-                        name = list(recordings.keys())[idx]
-                        print(f"Playing recording: {name}")
-                        play_recording(name)
-
-    cv2.setMouseCallback("Color Detection and Sound", on_mouse)
-
     # Handle keyboard input
     key = cv2.waitKey(1) & 0xFF
-    if naming_mode:
+
+    if key == ord('1'):  # Numlock key 1 for starting recording
+        recording_mode = True
+        naming_mode = False
+        current_recording.clear()
+        print("Recording started...")
+
+    elif key == ord('2'):  # Numlock key 2 for stopping recording
+        recording_mode = False
+        if current_recording:
+            naming_mode = True
+            print("Recording stopped. Enter name in the video window.")
+
+    elif naming_mode:
         if key == 13:  # Enter key
             if recording_name.strip():
                 recordings[recording_name.strip()] = current_recording.copy()
-                print(f"Recording saved as '{recording_name.strip()}'.")
-                current_recording.clear()
-                recording_name = ""
-                naming_mode = False
-        elif key == 8:  # Backspace
+                print(f"Recording saved as: {recording_name.strip()}")
+            recording_name = ""
+            naming_mode = False
+        elif key == 8:  # Backspace key
             recording_name = recording_name[:-1]
-        elif key != 255:  # Other keys
+        elif 32 <= key <= 126:  # Printable characters
             recording_name += chr(key)
 
-    if key == ord('q'):  # Quit on 'q' key
-        break
+    elif key == ord('+'):  # Increase playback speed
+        playback_speed += 1
+        print(f"Playback speed increased to: {playback_speed}x")
+
+    elif key == ord('-'):  # Decrease playback speed
+        playback_speed = max(1, playback_speed - 1)  # Ensure speed is at least 1
+        print(f"Playback speed decreased to: {playback_speed}x")
+
+    elif key == ord('q'):  # Quit the application
+        exit_program = True
 
 cap.release()
 cv2.destroyAllWindows()
+
+
+
+
 
 
 
