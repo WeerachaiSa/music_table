@@ -45,6 +45,8 @@ color_to_sound = {
 recordings = {}
 current_recording = []
 recording_mode = False
+naming_mode = False
+recording_name = ""
 
 # Function to detect color
 def detect_color(hsv_frame, x, y):
@@ -62,6 +64,12 @@ def play_sound_by_color(color):
         if sound:
             sound.play()
 
+# Function to play a recording
+def play_recording(recording_name):
+    if recording_name in recordings:
+        for color in recordings[recording_name]:
+            play_sound_by_color(color)
+
 # Adjust brightness and contrast using CLAHE
 def adjust_brightness_contrast(image):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -71,14 +79,41 @@ def adjust_brightness_contrast(image):
     lab = cv2.merge((l, a, b))
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-# Playback a recording
-def playback_recording(recording):
-    for color in recording:
-        play_sound_by_color(color)
-        pygame.time.wait(500)  # Add a delay between sounds
+# Draw buttons on the frame
+def draw_buttons(frame):
+    height, width, _ = frame.shape
+    button_width = 150
+    button_height = 50
+
+    # Define button positions
+    record_button = (10, height - 60, button_width, button_height)
+    stop_button = (170, height - 60, button_width, button_height)
+
+    # Draw buttons
+    cv2.rectangle(frame, (record_button[0], record_button[1]),
+                  (record_button[0] + record_button[2], record_button[1] + record_button[3]), (0, 255, 0), -1)
+    cv2.putText(frame, "Record", (record_button[0] + 10, record_button[1] + 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+    cv2.rectangle(frame, (stop_button[0], stop_button[1]),
+                  (stop_button[0] + stop_button[2], stop_button[1] + stop_button[3]), (0, 0, 255), -1)
+    cv2.putText(frame, "Stop", (stop_button[0] + 30, stop_button[1] + 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+    return record_button, stop_button
+
+# Draw recording list on the frame
+def draw_recording_list(frame):
+    height, width, _ = frame.shape
+    y_offset = 20
+    for idx, name in enumerate(recordings.keys()):
+        y_position = y_offset + idx * 30
+        cv2.putText(frame, name, (width - 200, y_position),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+    return width - 200, y_offset, 200, len(recordings) * 30
 
 # Start capturing from webcam
-cap = cv2.VideoCapture(0)  # Change to 0 for the default webcam
+cap = cv2.VideoCapture(1)  # Change to 0 for the default webcam
 x_position = 0  # Initial position of scanning line
 playback_speed = 2  # Default scanning speed
 
@@ -117,10 +152,14 @@ while True:
     cv2.putText(frame, f"Speed: {playback_speed}x", (10, 100),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-    # Show recording status
-    if recording_mode:
-        cv2.putText(frame, "Recording: ON", (10, 150),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+    # Show naming prompt if in naming mode
+    if naming_mode:
+        cv2.putText(frame, f"Enter name: {recording_name}_", (10, 150),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+
+    # Draw buttons and get their positions
+    record_button, stop_button = draw_buttons(frame)
+    recording_list_area = draw_recording_list(frame)
 
     # Show the frame
     cv2.imshow("Color Detection and Sound", frame)
@@ -129,42 +168,53 @@ while True:
     x_position += playback_speed
     if x_position >= frame.shape[1]:  # Reset to the left side if it reaches the right
         x_position = 0
-        if recording_mode and current_recording:  # Ask to save the recording if not empty
-            print("Recording complete. Enter a name to save the recording, or press Enter to discard:")
-            name = input().strip()
-            if name:
-                recordings[name] = current_recording.copy()
-                print(f"Recording saved as '{name}'.")
-            current_recording.clear()
+
+    # Handle mouse input for button clicks
+    def on_mouse(event, x, y, flags, param):
+        global recording_mode, naming_mode, recording_name
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if record_button[0] <= x <= record_button[0] + record_button[2] and record_button[1] <= y <= record_button[1] + record_button[3]:
+                recording_mode = True
+                naming_mode = False
+                current_recording.clear()
+                print("Recording started...")
+            elif stop_button[0] <= x <= stop_button[0] + stop_button[2] and stop_button[1] <= y <= stop_button[1] + stop_button[3]:
+                recording_mode = False
+                if current_recording:
+                    naming_mode = True
+                    print("Recording stopped. Enter name in the video window.")
+            # Check if a recording name is clicked
+            else:
+                list_x, list_y, list_width, list_height = recording_list_area
+                if list_x <= x <= list_x + list_width and list_y <= y <= list_y + list_height:
+                    idx = (y - list_y) // 30
+                    if 0 <= idx < len(recordings):
+                        name = list(recordings.keys())[idx]
+                        print(f"Playing recording: {name}")
+                        play_recording(name)
+
+    cv2.setMouseCallback("Color Detection and Sound", on_mouse)
 
     # Handle keyboard input
     key = cv2.waitKey(1) & 0xFF
+    if naming_mode:
+        if key == 13:  # Enter key
+            if recording_name.strip():
+                recordings[recording_name.strip()] = current_recording.copy()
+                print(f"Recording saved as '{recording_name.strip()}'.")
+                current_recording.clear()
+                recording_name = ""
+                naming_mode = False
+        elif key == 8:  # Backspace
+            recording_name = recording_name[:-1]
+        elif key != 255:  # Other keys
+            recording_name += chr(key)
+
     if key == ord('q'):  # Quit on 'q' key
         break
-    elif key == ord('+'):  # Increase speed
-        playback_speed = min(playback_speed + 1, 10)  # Cap at 10x
-    elif key == ord('-'):  # Decrease speed
-        playback_speed = max(playback_speed - 1, 1)  # Minimum 1x
-    elif key == ord('p'):  # Play a recording
-        print("Available recordings:")
-        for name in recordings:
-            print(f"- {name}")
-        print("Enter the name of the recording to play:")
-        name = input().strip()
-        if name in recordings:
-            print(f"Playing recording '{name}'...")
-            playback_recording(recordings[name])
-        else:
-            print("Recording not found.")
-    elif key == ord('r'):  # Toggle recording mode
-        recording_mode = not recording_mode
-        if recording_mode:
-            print("Recording started...")
-            current_recording.clear()
-        else:
-            print("Recording stopped.")
 
 cap.release()
 cv2.destroyAllWindows()
+
 
 
